@@ -1,0 +1,43 @@
+{
+  "name": "sanitize-data",
+  "version": "1.0.0",
+  "description": "🧼 A lightweight utility for redacting, masking, and randomizing sensitive or structured data in JavaScript/TypeScript.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jaktestowac/sanitize-data.git"
+  },
+  "homepage": "https://github.com/jaktestowac/sanitize-data",
+  "scripts": {
+    "build": "tsup",
+    "prepare": "tsup",
+    "test": "vitest run",
+    "npm:patch": "npm version patch",
+    "npm:publish": "npm publish --access public"
+  },
+  "keywords": [
+    "sanitize",
+    "data",
+    "typescript",
+    "mask",
+    "redact",
+    "replace",
+    "randomize",
+    "obfuscate",
+    "testing",
+    "privacy"
+  ],
+  "author": "jaktestowac.pl",
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^7.2.0",
+    "typescript": "^5.3.3",
+    "prettier": "3.5.3",
+    "vitest": "^3.1.2"
+  }
+}
