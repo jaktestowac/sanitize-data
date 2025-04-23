@@ -1,6 +1,6 @@
 {
   "name": "sanitize-data",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "🧼 A lightweight utility for sanitization, redacting, masking, and randomizing sensitive or structured data in JavaScript/TypeScript.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
