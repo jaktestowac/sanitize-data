@@ -289,7 +289,7 @@ export function sanitize(input: any, options: SanitizeOptions): any {
                     }
                   }
                 }
-                if (fieldGen) break;
+                if (fieldGen !== undefined) break;
               }
             }
           }
