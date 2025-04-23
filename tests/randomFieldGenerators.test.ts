@@ -1,5 +1,5 @@
 import { test, expect, describe } from "vitest";
-import { sanitize } from "../src/sanitize";
+import { sanitize } from "../src/index";
 
 describe("randomFieldGenerators", () => {
   test("field generator by key", () => {
