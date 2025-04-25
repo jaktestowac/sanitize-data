@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "type": "module",
   "files": [
     "dist"
   ],
@@ -18,7 +19,8 @@
     "prepare": "tsup",
     "test": "vitest run",
     "npm:patch": "npm version patch",
-    "npm:publish": "npm publish --access public"
+    "npm:publish": "npm publish --access public",
+    "t": "tsx testpath.ts"
   },
   "keywords": [
     "sanitize",
@@ -35,9 +37,10 @@
   "author": "jaktestowac.pl",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^22.15.2",
+    "prettier": "3.5.3",
     "tsup": "^7.2.0",
     "typescript": "^5.3.3",
-    "prettier": "3.5.3",
     "vitest": "^3.1.2"
   }
 }

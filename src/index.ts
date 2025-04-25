@@ -1,5 +1,9 @@
 export type SanitizerMode = "mask" | "redact" | "random" | "preserve";
 
+export interface SanitizerRules {
+  [key: string]: SanitizerMode;
+}
+
 export interface SanitizeOptions {
   /**
    * A map of keys to sanitization modes.
@@ -11,7 +15,7 @@ export interface SanitizeOptions {
    *   { "user.*": "mask" } // mask all direct children of user
    *   { "user.**": "redact" } // redact all nested keys under user
    */
-  rules: Record<string, SanitizerMode>;
+  rules?: { [key: string]: SanitizerMode };
 
   /**
    * Optional fallback mode if no rule matches a key.
@@ -94,15 +98,50 @@ export interface SanitizeOptions {
   keyMatchAnyLevel?: boolean;
 }
 
-function matchRule(path: string, rules: Record<string, SanitizerMode>): SanitizerMode | undefined {
+function parsePath(path: string): string[] {
+  // Parse dot notation and bracket notation
+  const parts: string[] = [];
+  let currentPart = "";
+  let inBrackets = false;
+
+  for (let i = 0; i < path.length; i++) {
+    const char = path[i];
+
+    if (char === "." && !inBrackets) {
+      if (currentPart) {
+        parts.push(currentPart);
+        currentPart = "";
+      }
+    } else if (char === "[" && !inBrackets) {
+      if (currentPart) {
+        parts.push(currentPart);
+        currentPart = "";
+      }
+      inBrackets = true;
+    } else if (char === "]" && inBrackets) {
+      parts.push(currentPart);
+      currentPart = "";
+      inBrackets = false;
+    } else {
+      currentPart += char;
+    }
+  }
+
+  if (currentPart) {
+    parts.push(currentPart);
+  }
+  return parts;
+}
+
+function matchRule(path: string, rules: { [key: string]: SanitizerMode }): SanitizerMode | undefined {
   // Exact match first
   if (rules[path]) return rules[path];
 
-  const pathParts = path.split(".");
+  const pathParts = parsePath(path);
 
   // Try glob patterns in rules
   for (const ruleKey of Object.keys(rules)) {
-    const ruleParts = ruleKey.split(".");
+    const ruleParts = parsePath(ruleKey); // Fix: Use parsePath for ruleKey
 
     // Recursive helper for '**' matching
     function match(i: number, j: number): boolean {
@@ -139,56 +178,107 @@ function matchRule(path: string, rules: Record<string, SanitizerMode>): Sanitize
 
 function findMostSpecificRule(
   path: string,
-  rules: Record<string, SanitizerMode>,
+  parsedPath: string[],
+  rules: { [key: string]: SanitizerMode },
   keyMatchAnyLevel: boolean = true,
 ): SanitizerMode | undefined {
   // Collect all matching rules (including globs)
-  let bestMatch: { length: number; mode: SanitizerMode } | undefined;
-  const pathParts = path.split(".");
+  let bestMatch: { specificity: number; mode: SanitizerMode } | undefined;
+
   for (const ruleKey of Object.keys(rules)) {
+    const ruleParsedPath = parsePath(ruleKey);
+
+    // Exact path match always wins
     if (ruleKey === path) {
-      // Exact match always wins
       return rules[ruleKey];
     }
-    // Handle .** glob
-    if (ruleKey.endsWith(".**")) {
-      const base = ruleKey.slice(0, -3); // Remove .**
-      if ((base && path.startsWith(base + ".") && path.length > base.length + 1) || (base && path === base)) {
-        if (!bestMatch || ruleKey.length > bestMatch.length) {
-          bestMatch = { length: ruleKey.length, mode: rules[ruleKey] };
+
+    // Check for ** pattern (matches any nested path)
+    if (ruleParsedPath.length > 0 && ruleParsedPath[ruleParsedPath.length - 1] === "**") {
+      const baseRulePath = ruleParsedPath.slice(0, -1);
+      // Check if the base part matches the beginning of the path
+      if (baseRulePath.every((segment, i) => parsedPath[i] === segment) && parsedPath.length >= baseRulePath.length) {
+        const specificity = baseRulePath.length * 100 + 1; // Base path length determines specificity
+        if (!bestMatch || specificity > bestMatch.specificity) {
+          bestMatch = { specificity, mode: rules[ruleKey] };
         }
       }
     }
-    // Handle .* glob (one level deep)
-    else if (ruleKey.endsWith(".*")) {
-      const base = ruleKey.slice(0, -2);
-      if (base === "" || path.startsWith(base + ".")) {
-        const rest = path.slice(base.length ? base.length + 1 : 0);
-        if (rest.length > 0 && !rest.includes(".")) {
-          if (!bestMatch || ruleKey.length > bestMatch.length) {
-            bestMatch = { length: ruleKey.length, mode: rules[ruleKey] };
+    // Check for * pattern (matches one level)
+    else if (ruleParsedPath.length > 0 && ruleParsedPath[ruleParsedPath.length - 1] === "*") {
+      const baseRulePath = ruleParsedPath.slice(0, -1);
+      // Check if the base part matches and we're only one level deeper
+      if (
+        baseRulePath.every((segment, i) => parsedPath[i] === segment) &&
+        parsedPath.length === baseRulePath.length + 1
+      ) {
+        const specificity = baseRulePath.length * 100 + 2; // More specific than **
+        if (!bestMatch || specificity > bestMatch.specificity) {
+          bestMatch = { specificity, mode: rules[ruleKey] };
+        }
+      }
+    }
+    // Check for [*] pattern (matches any array element)
+    else if (ruleParsedPath.some((segment) => segment === "*")) {
+      // Create a pattern where we replace [*] segments with the actual index from path
+      const matches = ruleParsedPath.length === parsedPath.length;
+
+      if (matches) {
+        let allSegmentsMatch = true;
+        let arrayWildcardsCount = 0;
+
+        for (let i = 0; i < ruleParsedPath.length; i++) {
+          if (ruleParsedPath[i] === "*") {
+            // For array wildcards, we need to check if the path segment is a valid array index
+            if (!/^\d+$/.test(parsedPath[i])) {
+              allSegmentsMatch = false;
+              break;
+            }
+            arrayWildcardsCount++;
+          } else if (ruleParsedPath[i] !== parsedPath[i]) {
+            allSegmentsMatch = false;
+            break;
+          }
+        }
+
+        if (allSegmentsMatch) {
+          // More specific than * but less than exact match
+          // More array wildcards means less specific
+          const specificity = ruleParsedPath.length * 100 + 5 - arrayWildcardsCount;
+          if (!bestMatch || specificity > bestMatch.specificity) {
+            bestMatch = { specificity, mode: rules[ruleKey] };
           }
         }
       }
     }
-    // Plain key match: match at any level or only top-level depending on option
-    else if (!ruleKey.includes(".")) {
-      if (
-        (keyMatchAnyLevel && pathParts[pathParts.length - 1] === ruleKey) ||
-        (!keyMatchAnyLevel && pathParts.length === 1 && pathParts[0] === ruleKey)
-      ) {
-        if (!bestMatch || ruleKey.length > bestMatch.length) {
-          bestMatch = { length: ruleKey.length, mode: rules[ruleKey] };
+    // Plain key match at any level
+    else if (ruleParsedPath.length === 1 && keyMatchAnyLevel) {
+      const keyToMatch = ruleParsedPath[0];
+      if (parsedPath[parsedPath.length - 1] === keyToMatch) {
+        const specificity = 1; // Least specific match
+        if (!bestMatch || specificity > bestMatch.specificity) {
+          bestMatch = { specificity, mode: rules[ruleKey] };
+        }
+      }
+    }
+    // Exact path segment matching without globs
+    else if (parsedPath.length === ruleParsedPath.length) {
+      const allSegmentsMatch = ruleParsedPath.every((segment, i) => parsedPath[i] === segment);
+      if (allSegmentsMatch) {
+        const specificity = ruleParsedPath.length * 100 + 10; // Highest specificity for exact matches
+        if (!bestMatch || specificity > bestMatch.specificity) {
+          bestMatch = { specificity, mode: rules[ruleKey] };
         }
       }
     }
   }
+
   return bestMatch?.mode;
 }
 
 export function sanitize(input: any, options: SanitizeOptions): any {
   const {
-    rules,
+    rules = {},
     defaultMode = "preserve",
     redactString = "[REDACTED]",
     randomString = "[random]",
@@ -207,6 +297,225 @@ export function sanitize(input: any, options: SanitizeOptions): any {
     }
   }
 
+  // Helper function to find a matching randomFieldGenerator
+  function findMatchingRandomFieldGenerator(
+    path: string,
+    parsedPath: string[],
+  ): ((value: unknown, path: string) => unknown) | undefined {
+    // Exact match first (same as rule matching)
+    if (randomFieldGenerators[path]) {
+      return randomFieldGenerators[path];
+    }
+
+    if (
+      randomFieldGeneratorsCaseInsensitive &&
+      randomFieldGeneratorsLower &&
+      randomFieldGeneratorsLower[path.toLowerCase()]
+    ) {
+      return randomFieldGeneratorsLower[path.toLowerCase()];
+    }
+
+    // Try matching with matchRule to handle all types of wildcards including bracket notation
+    for (const genKey of Object.keys(randomFieldGenerators)) {
+      // Use the same matchRule function as for rules
+      if (matchWildcardPattern(path, genKey, randomFieldGeneratorsCaseInsensitive)) {
+        return randomFieldGenerators[genKey];
+      }
+    }
+
+    // If we reached here and have case-insensitive matching enabled, try again with lowercase keys
+    if (randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower) {
+      for (const genKey of Object.keys(randomFieldGeneratorsLower)) {
+        if (matchWildcardPattern(path.toLowerCase(), genKey, true)) {
+          return randomFieldGeneratorsLower[genKey];
+        }
+      }
+    }
+
+    // Handle the case-sensitive and case-insensitive lookups
+    const generatorsToCheck =
+      randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower
+        ? randomFieldGeneratorsLower
+        : randomFieldGenerators;
+
+    const compareFn = randomFieldGeneratorsCaseInsensitive
+      ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+      : (a: string, b: string) => a === b;
+
+    // Try all field generators using the same matching logic as rule finding
+    for (const genKey of Object.keys(
+      randomFieldGeneratorsCaseInsensitive ? randomFieldGeneratorsLower! : randomFieldGenerators,
+    )) {
+      const genKeyParsed = parsePath(genKey);
+
+      // Plain key match at any level
+      if (genKeyParsed.length === 1 && keyMatchAnyLevel) {
+        const keyToMatch = genKeyParsed[0];
+        if (compareFn(parsedPath[parsedPath.length - 1], keyToMatch)) {
+          return generatorsToCheck[randomFieldGeneratorsCaseInsensitive ? genKey.toLowerCase() : genKey];
+        }
+      }
+
+      // Check for * and ** patterns (same logic as in findMostSpecificRule)
+      // Check for ** pattern (matches any nested path)
+      if (genKeyParsed.length > 0 && genKeyParsed[genKeyParsed.length - 1] === "**") {
+        const baseRulePath = genKeyParsed.slice(0, -1);
+        // Check if the base part matches the beginning of the path
+        if (
+          baseRulePath.every((segment, i) => compareFn(segment, parsedPath[i])) &&
+          parsedPath.length >= baseRulePath.length
+        ) {
+          return generatorsToCheck[randomFieldGeneratorsCaseInsensitive ? genKey.toLowerCase() : genKey];
+        }
+      }
+      // Check for * pattern (matches one level)
+      else if (genKeyParsed.length > 0 && genKeyParsed[genKeyParsed.length - 1] === "*") {
+        const baseRulePath = genKeyParsed.slice(0, -1);
+        // Check if the base part matches and we're only one level deeper
+        if (
+          baseRulePath.every((segment, i) => compareFn(segment, parsedPath[i])) &&
+          parsedPath.length === baseRulePath.length + 1
+        ) {
+          return generatorsToCheck[randomFieldGeneratorsCaseInsensitive ? genKey.toLowerCase() : genKey];
+        }
+      }
+      // Check for [*] pattern (matches any array element)
+      else if (genKeyParsed.some((segment) => segment === "*")) {
+        // Create a pattern where we replace [*] segments with the actual index from path
+        if (genKeyParsed.length === parsedPath.length) {
+          let allSegmentsMatch = true;
+
+          for (let i = 0; i < genKeyParsed.length; i++) {
+            if (genKeyParsed[i] === "*") {
+              // For array wildcards, we need to check if the path segment is a valid array index
+              if (!/^\d+$/.test(parsedPath[i])) {
+                allSegmentsMatch = false;
+                break;
+              }
+            } else if (!compareFn(genKeyParsed[i], parsedPath[i])) {
+              allSegmentsMatch = false;
+              break;
+            }
+          }
+
+          if (allSegmentsMatch) {
+            return generatorsToCheck[randomFieldGeneratorsCaseInsensitive ? genKey.toLowerCase() : genKey];
+          }
+        }
+      }
+      // Check for exact path match
+      else if (parsedPath.length === genKeyParsed.length) {
+        const allSegmentsMatch = genKeyParsed.every((segment, i) => compareFn(segment, parsedPath[i]));
+        if (allSegmentsMatch) {
+          return generatorsToCheck[randomFieldGeneratorsCaseInsensitive ? genKey.toLowerCase() : genKey];
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  // Helper function to match wildcards in paths, including bracket notation
+  function matchWildcardPattern(targetPath: string, pattern: string, caseInsensitive: boolean = false): boolean {
+    const compareFn = caseInsensitive
+      ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+      : (a: string, b: string) => a === b;
+
+    // Special case for bracket notation with wildcards - we need to handle this explicitly
+    if (pattern.includes("[*]")) {
+      // First normalize paths - replace square brackets to make parsing easier
+      // Convert "array[0]" to "array.0" format for both pattern and targetPath
+      const normalizedPattern = pattern.replace(/\[\*\]/g, ".*");
+      const normalizedTarget = targetPath.replace(/\[(\d+)\]/g, ".$1");
+
+      // Create regex pattern by escaping dots and replacing * with digit matcher
+      const regexPattern =
+        "^" +
+        normalizedPattern
+          .replace(/\./g, "\\.") // Escape dots
+          .replace(/\*/g, "(\\d+)") + // Replace * with digits
+        "$";
+
+      const regex = new RegExp(regexPattern, caseInsensitive ? "i" : "");
+      return regex.test(normalizedTarget);
+    }
+
+    const targetParts = parsePath(targetPath);
+    const patternParts = parsePath(pattern);
+
+    // Handle "*.something" pattern (any parent followed by specific key)
+    if (pattern.startsWith("*.") && patternParts.length > 1) {
+      // Extract the part after "*."
+      const suffix = patternParts.slice(1);
+      
+      // Special case: If targetPath has exactly the same number of parts as the suffix,
+      // this means it could be a root-level match (no parent)
+      if (targetParts.length === suffix.length) {
+        let allMatch = true;
+        for (let i = 0; i < suffix.length; i++) {
+          if (!compareFn(suffix[i], targetParts[i])) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) return true;
+      }
+      
+      // Check if the target path ends with the suffix (regular nested case)
+      if (targetParts.length > suffix.length) {
+        const targetSuffix = targetParts.slice(targetParts.length - suffix.length);
+        let allMatch = true;
+        for (let i = 0; i < suffix.length; i++) {
+          if (!compareFn(suffix[i], targetSuffix[i])) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) return true;
+      }
+      
+      return false; // No match for "*.something" pattern
+    }
+
+    // If pattern has a different number of parts, it's definitely not a match
+    // unless we're dealing with ** wildcards or *.suffix patterns which we've already handled
+    if (!pattern.includes("**") && patternParts.length !== targetParts.length) {
+      return false;
+    }
+
+    // Handle ** wildcard pattern (matches any nested path)
+    if (patternParts.includes("**")) {
+      const index = patternParts.indexOf("**");
+      // Check if parts before ** match
+      for (let i = 0; i < index; i++) {
+        if (patternParts[i] !== "*" && !compareFn(patternParts[i], targetParts[i] || "")) {
+          return false;
+        }
+      }
+      // If ** is the last part, match everything after
+      if (index === patternParts.length - 1) return true;
+
+      // Otherwise, more complex matching required
+      return false; // Simplified, you can expand if needed
+    }
+
+    // Standard segment by segment comparison
+    for (let i = 0; i < patternParts.length; i++) {
+      // Handle wildcard
+      if (patternParts[i] === "*") {
+        // For bracket notation or dot notation, an asterisk can match any segment
+        // We don't require numeric index for general wildcards
+        continue;
+      }
+      // Regular segment comparison
+      else if (!compareFn(patternParts[i], targetParts[i])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   const walk = (obj: any, path: string[] = []): any => {
     if (obj === null || typeof obj !== "object") return obj;
 
@@ -214,11 +523,20 @@ export function sanitize(input: any, options: SanitizeOptions): any {
 
     for (const key of Object.keys(obj)) {
       const fullPath = [...path, key].join(".");
+      const parsedPath = parsePath(fullPath);
 
       // Find the most specific rule for this path
-      let mode: SanitizerMode | undefined = findMostSpecificRule(fullPath, rules, keyMatchAnyLevel);
+      let mode: SanitizerMode | undefined = findMostSpecificRule(
+        parsedPath.join("."),
+        parsedPath,
+        rules,
+        keyMatchAnyLevel,
+      );
       if (!mode) mode = defaultMode;
       const value = obj[key];
+
+      // Find matching field generator
+      const fieldGen = findMatchingRandomFieldGenerator(fullPath, parsedPath);
 
       switch (mode) {
         case "mask":
@@ -235,88 +553,14 @@ export function sanitize(input: any, options: SanitizeOptions): any {
           result[key] = redactString;
           break;
         case "random": {
-          // Field-specific generator: prefer fullPath, then key (with keyMatchAnyLevel logic)
-          let fieldGen: ((value: unknown, path: string) => unknown) | undefined;
-          if (randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower) {
-            fieldGen =
-              randomFieldGeneratorsLower[fullPath.toLowerCase()] ||
-              (keyMatchAnyLevel
-                ? randomFieldGeneratorsLower[key.toLowerCase()]
-                : path.length === 0
-                  ? randomFieldGeneratorsLower[key.toLowerCase()]
-                  : undefined);
-          } else {
-            fieldGen =
-              randomFieldGenerators[fullPath] ||
-              (keyMatchAnyLevel
-                ? randomFieldGenerators[key]
-                : path.length === 0
-                  ? randomFieldGenerators[key]
-                  : undefined);
-          }
-          // If fieldGen is not found, check for any matching path suffix, partial path, or "*." partial path in randomFieldGenerators
-          if (!fieldGen && fullPath.includes(".")) {
-            const parts = fullPath.split(".");
-            // Try all possible suffixes (not just parents), longest first
-            for (let i = 1; i < parts.length; i++) {
-              const suffix = parts.slice(i).join(".");
-              if (randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower) {
-                if (randomFieldGeneratorsLower[suffix.toLowerCase()]) {
-                  fieldGen = randomFieldGeneratorsLower[suffix.toLowerCase()];
-                  break;
-                }
-              } else {
-                if (randomFieldGenerators[suffix]) {
-                  fieldGen = randomFieldGenerators[suffix];
-                  break;
-                }
-              }
-            }
-            // Try all possible partial paths (not just suffixes), longest first
-            if (!fieldGen) {
-              for (let len = parts.length; len > 1; len--) {
-                for (let start = 0; start <= parts.length - len; start++) {
-                  const partial = parts.slice(start, start + len).join(".");
-                  if (randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower) {
-                    if (randomFieldGeneratorsLower[partial.toLowerCase()]) {
-                      fieldGen = randomFieldGeneratorsLower[partial.toLowerCase()];
-                      break;
-                    }
-                  } else {
-                    if (randomFieldGenerators[partial]) {
-                      fieldGen = randomFieldGenerators[partial];
-                      break;
-                    }
-                  }
-                }
-                if (fieldGen !== undefined) break;
-              }
-            }
-          }
-          // Try "*.<key>" partial path (matches any parent, direct key, or top-level key)
-          if (!fieldGen) {
-            const parts = fullPath.split(".");
-            const starKey = `*.${parts[parts.length - 1]}`;
-            if (randomFieldGeneratorsCaseInsensitive && randomFieldGeneratorsLower) {
-              if (randomFieldGeneratorsLower[starKey.toLowerCase()]) {
-                fieldGen = randomFieldGeneratorsLower[starKey.toLowerCase()];
-              }
-            } else {
-              if (randomFieldGenerators[starKey]) {
-                fieldGen = randomFieldGenerators[starKey];
-              }
-            }
-          }
+          // Apply the field generator if found, otherwise use default random handling
           if (fieldGen) {
             result[key] = fieldGen(value, fullPath);
           } else if (value !== null && typeof value === "object") {
             // If a random object generator is provided, use it
             if (randomGenerators.object && !Array.isArray(value)) {
               // If randomFieldGenerators are present, apply them to each property
-              if (
-                Object.keys(randomFieldGenerators).length > 0 ||
-                (randomFieldGeneratorsLower && Object.keys(randomFieldGeneratorsLower).length > 0)
-              ) {
+              if (Object.keys(randomFieldGenerators).length > 0) {
                 // Recurse into children and apply randomFieldGenerators to nested fields
                 result[key] = walk(value, [...path, key]);
               } else {

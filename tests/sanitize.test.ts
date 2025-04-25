@@ -1,11 +1,11 @@
 import { test, expect, describe } from "vitest";
-import { sanitize } from "../src/index";
+import { sanitize, SanitizerRules } from "../src/index";
 
 describe("sanitize", () => {
   test("top-level key match", () => {
     // Arrange
     const input = { email: "a@b.com", name: "John" };
-    const rules = { email: "redact" };
+    const rules: SanitizerRules = { email: "redact" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -15,7 +15,7 @@ describe("sanitize", () => {
   test("low-level key match", () => {
     // Arrange
     const input = { user: { email: "a@b.com", name: "John" } };
-    const rules = { email: "redact" };
+    const rules: SanitizerRules = { email: "redact" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -25,7 +25,7 @@ describe("sanitize", () => {
   test("only top-level key match", () => {
     // Arrange
     const input = { name: "abc", user: { email: "a@b.com", name: "John" } };
-    const rules = { name: "redact" };
+    const rules: SanitizerRules = { name: "redact" };
     // Act
     const result = sanitize(input, { rules, keyMatchAnyLevel: false });
     // Assert
@@ -35,7 +35,7 @@ describe("sanitize", () => {
   test("user.* matches one level deep", () => {
     // Arrange
     const input = { user: { name: "Alice", age: 30, meta: { city: "NY" } } };
-    const rules = { "user.*": "mask" };
+    const rules: SanitizerRules = { "user.*": "mask" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -47,7 +47,7 @@ describe("sanitize", () => {
   test("user.** matches nested keys recursively - redact", () => {
     // Arrange
     const input = { user: { name: "Bob", meta: { city: "LA", zip: 90001 } } };
-    const rules = { "user.**": "redact" };
+    const rules: SanitizerRules = { "user.**": "redact" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -58,7 +58,7 @@ describe("sanitize", () => {
   test("user.** matches nested keys recursively - masked", () => {
     // Arrange
     const input = { user: { name: "Bob", meta: { city: "LA", zip: 90001 } } };
-    const rules = { "user.**": "mask" };
+    const rules: SanitizerRules = { "user.**": "mask" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -70,7 +70,7 @@ describe("sanitize", () => {
   test("fallback to defaultMode", () => {
     // Arrange
     const input = { foo: "bar", baz: 42 };
-    const rules = {};
+    const rules: SanitizerRules = {};
     // Act
     const result = sanitize(input, { rules, defaultMode: "mask" });
     // Assert
@@ -81,7 +81,7 @@ describe("sanitize", () => {
   test("random mode", () => {
     // Arrange
     const input = { n: 123, s: "abc", b: true, arr: [1, 2, 3] };
-    const rules = { n: "random", s: "random", b: "random", arr: "random" };
+    const rules: SanitizerRules = { n: "random", s: "random", b: "random", arr: "random" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -94,7 +94,7 @@ describe("sanitize", () => {
   test("preserve mode", () => {
     // Arrange
     const input = { a: 1, b: { c: 2 } };
-    const rules = { a: "preserve", "b.c": "preserve" };
+    const rules: SanitizerRules = { a: "preserve", "b.c": "preserve" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -104,7 +104,7 @@ describe("sanitize", () => {
   test("mixed glob and exact", () => {
     // Arrange
     const input = { user: { email: "x@y.com", name: "Zed" }, email: "a@b.com" };
-    const rules = { "user.email": "redact", email: "mask", "user.*": "mask" };
+    const rules: SanitizerRules = { "user.email": "redact", email: "mask", "user.*": "mask" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -116,7 +116,7 @@ describe("sanitize", () => {
   test("custom redact and random strings", () => {
     // Arrange
     const input = { secret: "abc", foo: 123, bar: true };
-    const rules = { secret: "redact", foo: "random", bar: "random" };
+    const rules: SanitizerRules = { secret: "redact", foo: "random", bar: "random" };
     // Act
     const result = sanitize(input, { rules, redactString: "<REMOVED>", randomString: "<RANDOM>" });
     // Assert
@@ -135,7 +135,7 @@ describe("sanitize", () => {
       },
       admin: { name: "Bob", meta: { city: "LA" } },
     };
-    const rules = {
+    const rules: SanitizerRules = {
       "user.**": "redact",
       "user.meta.city": "mask",
       "admin.meta.city": "mask",
@@ -151,7 +151,7 @@ describe("sanitize", () => {
   test(".* glob only matches one level", () => {
     // Arrange
     const input = { a: { b: { c: 1 }, d: 2 }, x: 3 };
-    const rules = { "a.*": "mask", x: "redact" };
+    const rules: SanitizerRules = { "a.*": "mask", x: "redact" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -174,7 +174,7 @@ describe("sanitize", () => {
   test("random mode for arrays", () => {
     // Arrange
     const input = { arr: [1, 2, 3], arr2: ["a", "b"] };
-    const rules = { arr: "random", arr2: "random" };
+    const rules: SanitizerRules = { arr: "random", arr2: "random" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -186,7 +186,7 @@ describe("sanitize", () => {
   test("redact mode for arrays", () => {
     // Arrange
     const input = { arr: ["secret", "hidden"] };
-    const rules = { arr: "redact" };
+    const rules: SanitizerRules = { arr: "redact" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -196,7 +196,7 @@ describe("sanitize", () => {
   test("preserve mode for arrays", () => {
     // Arrange
     const input = { arr: [1, 2, 3] };
-    const rules = { arr: "preserve" };
+    const rules: SanitizerRules = { arr: "preserve" };
     // Act
     const result = sanitize(input, { rules });
     // Assert
@@ -214,7 +214,7 @@ describe("sanitize", () => {
   test("custom randomGenerators for number, string, boolean", () => {
     // Arrange
     const input = { n: 1, s: "x", b: false };
-    const rules = { n: "random", s: "random", b: "random" };
+    const rules: SanitizerRules = { n: "random", s: "random", b: "random" };
     const randomGenerators = {
       number: () => 42,
       string: () => "RANDOMIZED",
@@ -231,7 +231,7 @@ describe("sanitize", () => {
   test("custom randomGenerators for array and object", () => {
     // Arrange
     const input = { arr: [1, 2, 3], obj: { foo: "bar" } };
-    const rules = { arr: "random", obj: "random" };
+    const rules: SanitizerRules = { arr: "random", obj: "random" };
     const randomGenerators = {
       array: (arr: any[]) => arr.map(() => "ARR"),
       object: (obj: object) => ({ replaced: true }),
@@ -246,7 +246,7 @@ describe("sanitize", () => {
   test("randomGenerators fallback to default for missing types", () => {
     // Arrange
     const input = { n: 1, arr: [1, 2] };
-    const rules = { n: "random", arr: "random" };
+    const rules: SanitizerRules = { n: "random", arr: "random" };
     const randomGenerators = {
       string: () => "STR",
     };
