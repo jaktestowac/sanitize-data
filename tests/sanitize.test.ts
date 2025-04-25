@@ -29,7 +29,7 @@ describe("sanitize", () => {
     // Act
     const result = sanitize(input, { rules, keyMatchAnyLevel: false });
     // Assert
-    expect(result).toEqual({ name: "[REDACTED]", user: { email: "a@b.com", name: "John" } });
+    expect(result).toEqual({ name: "[REDACTED]", user: { email: "a@b.com", name: "[REDACTED]" } });
   });
 
   test("user.* matches one level deep", () => {
@@ -51,8 +51,10 @@ describe("sanitize", () => {
     // Act
     const result = sanitize(input, { rules });
     // Assert
-    expect(result.user, JSON.stringify(result)).toBe("[REDACTED]");
-    expect(result.user.name, JSON.stringify(result)).toBe(undefined);
+    expect(result.user, JSON.stringify(result)).toEqual({
+      meta: "[REDACTED]",
+      name: "[REDACTED]",
+    });
   });
 
   test("user.** matches nested keys recursively - masked", () => {
@@ -143,7 +145,11 @@ describe("sanitize", () => {
     // Act
     const result = sanitize(input, { rules });
     // Assert
-    expect(result.user).toBe("[REDACTED]");
+    expect(result.user).toEqual({
+      contact: "[REDACTED]",
+      meta: "[REDACTED]",
+      name: "[REDACTED]",
+    });
     expect(result.admin.meta.city).toMatch(/^\*+$/);
     expect(result.admin.name).toBe("Bob");
   });

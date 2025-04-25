@@ -58,9 +58,15 @@ console.log(result);
 // {
 //   user: {
 //     email: "[REDACTED]",
-//     name: "***",
-//     meta: "[REDACTED]",
-//     contact: "[REDACTED]"
+//     name: "********",
+//     meta: {
+//       city: "[REDACTED]",
+//       zip: "[REDACTED]"
+//     },
+//     contact: {
+//       phone: "[REDACTED]",
+//       address: "[REDACTED]"
+//     }
 //   },
 //   token: "[REDACTED]",
 //   arr: [ 4821, 1937, 8203 ], // random numbers (example)
@@ -102,7 +108,7 @@ console.log(result);
 
 ## 🧩 Advanced: Custom Random Generators
 
-You can control randomization per type or per field, including partial/wildcard paths:
+You can control randomization per type or per field, including wildcard paths:
 
 ```typescript
 const rules = {
@@ -153,6 +159,34 @@ console.log(result);
 // }
 ```
 
+### Important Note on Field Generators
+
+Field generators are always applied when a match is found, regardless of the field's sanitization mode or rules. This means you can use field generators to transform specific fields even if they're not explicitly marked as "random" in your rules.
+
+```typescript
+const input = {
+  company: {
+    departments: [{ name: "Engineering" }, { name: "Marketing" }],
+  },
+};
+
+// No rules (defaultMode: "preserve"), but field generators still apply
+const randomFieldGenerators = {
+  "**.name": (val) => `Anonymous-${val}`,
+};
+
+const result = sanitize(input, { randomFieldGenerators });
+console.log(result);
+// {
+//   company: {
+//     departments: [
+//       { name: "Anonymous-Engineering" },
+//       { name: "Anonymous-Marketing" }
+//     ]
+//   }
+// }
+```
+
 ---
 
 ## 🧪 Rule & Field Generator Matching
@@ -161,16 +195,22 @@ console.log(result);
 - `"user.*"`: Matches any direct child of `user`
 - `"user.**"`: Matches any nested field under `user`
 - `"email"`: Matches any key named `email` (at any level, unless `keyMatchAnyLevel: false`)
-- `"*.key"`: Matches any key named `key` at any level (including top-level)
-- Partial paths (e.g., `"meta.score"`) match any field with that path suffix or as a subpath
+- `"*.key"`: Matches any key one level deep with the name `key`
+- `"**.key"`: Matches any key at any level with the name `key`
 
-### Matching Priority
+### Bracket Notation
 
-1. Exact dot-path (`user.email`)
-2. Glob patterns (`user.*`, `user.**`)
-3. Partial/inner paths (`meta.score`)
-4. Wildcard (`*.key`)
-5. Key name (`email`)
+The library also supports bracket notation for arrays:
+
+```typescript
+const rules = {
+  "products[*].variants[*].color": "random",
+};
+
+const randomFieldGenerators = {
+  "products[*].variants[*].color": () => "randomized-color",
+};
+```
 
 ---
 
@@ -182,7 +222,7 @@ console.log(result);
 const input = { a: 1, b: 2, c: 3 };
 const rules = { a: "preserve" };
 const result = sanitize(input, { rules, defaultMode: "mask" });
-// { a: 1, b: "*", c: "*" }
+// { a: 1, b: "********", c: "********" }
 ```
 
 ### Redact all nested fields under a key
@@ -191,7 +231,13 @@ const result = sanitize(input, { rules, defaultMode: "mask" });
 const input = { user: { name: "Alice", meta: { city: "NY" } }, admin: { name: "Bob" } };
 const rules = { "user.**": "redact" };
 const result = sanitize(input, { rules });
-// { user: "[REDACTED]", admin: { name: "Bob" } }
+// {
+//   user: {
+//     name: "[REDACTED]",
+//     meta: "[REDACTED]"
+//   },
+//   admin: { name: "Bob" }
+// }
 ```
 
 ### Use custom random string for all randoms
@@ -200,7 +246,10 @@ const result = sanitize(input, { rules });
 const input = { foo: "bar", arr: [1, 2, 3] };
 const rules = { foo: "random", arr: "random" };
 const result = sanitize(input, { rules, randomString: "<RANDOM>" });
-// { foo: "<RANDOM>", arr: ["<RANDOM>", "<RANDOM>", "<RANDOM>"] }
+// {
+//   foo: "abc123", // random string
+//   arr: [2145, 8721, 3019] // random numbers
+// }
 ```
 
 ---
